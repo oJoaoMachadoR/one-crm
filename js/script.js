@@ -6,17 +6,19 @@ const STAGE_LABELS={prospect:'Prospecção',negotiating:'Negociando',waiting:'Ag
 const STAGE_COLORS={prospect:'#4d8dff',negotiating:'#ffb800',waiting:'#b94dff',won:'#00e57a',lost:'#ff3c3c'};
 const PCOLORS=['#ff5c35','#4d8dff','#00e57a','#ffb800','#b94dff','#ff4d8d','#00c8d4','#ff9500'];
 const PICONS=['📦','💳','🏦','🔄','💰','📱','🎯','⚡','🛒','🏋️','💈','🍕','📚','🎓','🔧','💡'];
+const PRIORITY_ORDER={high:0,medium:1,low:2};
+const FB_KEYS={crm_products2:'_fbProducts',crm_leads2:'_fbLeads',crm_appts2:'_fbAppts',crm_ideas:'_fbIdeas'};
 
 function load(k,d){
   // Check if Firebase already loaded this key
-  const fbKey = {crm_products2:'_fbProducts',crm_leads2:'_fbLeads',crm_appts2:'_fbAppts',crm_ideas:'_fbIdeas'}[k];
+  const fbKey=FB_KEYS[k];
   if(fbKey && window[fbKey]) return window[fbKey];
   try{return JSON.parse(localStorage.getItem(k))||d}catch{return d}
 }
 function save(k,v){
   localStorage.setItem(k,JSON.stringify(v));
   // keep window._fb* in sync so load() returns fresh data
-  const fbKey={crm_products2:'_fbProducts',crm_leads2:'_fbLeads',crm_appts2:'_fbAppts',crm_ideas:'_fbIdeas'}[k];
+  const fbKey=FB_KEYS[k];
   if(fbKey) window[fbKey]=v;
   if(window._fbSave) window._fbSave(k,v);
 }
@@ -28,14 +30,15 @@ function fixLeads(arr){
     status: l.status||'active'
   }));
 }
+// "Conta" products never carry a value
+const isContaProduct=p=>!!p&&p.name.toLowerCase().includes('conta');
+function contaIds(){return new Set(products.filter(isContaProduct).map(p=>p.id));}
 
 // ── APP STATE ─────────────────────────────────────────────────
 let currentTab='agenda';
 let selColor='#ff5c35';
 let selIcon='💳';
-let selectedTags=[];
 let currentLeadId=null;
-let selectedOrigin=null;
 let editingProductId=null;
 let editingLeadId=null;
 let agendaView='week';
@@ -46,7 +49,6 @@ let pipelinePid='all';
 let pipelineFilter='all';
 let pipelineView='list';
 let _ideaModalCat='captação';
-let scheduleLeadId=null;
 
 // ── NAVIGATION ────────────────────────────────────────────────
 function switchTab(tab){
@@ -70,77 +72,76 @@ let products=load('crm_products2',[
   {id:2,name:'Conta',icon:'🏦',color:'#4d8dff'},
   {id:3,name:'Consórcio',icon:'🔄',color:'#00e57a'},
 ]);
+// Demo leads: [id, nome, produto, valor, prioridade, histórico de etapas]. A etapa atual é a última do histórico.
+const _T=d=>d+'T10:00:00.000Z';
 const _defaultLeads=[
-  {id:1,name:'João Ferreira',productId:1,value:15000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-08-10T10:00:00.000Z',lastMoveAt:'2026-09-15T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-08-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-15T10:00:00.000Z'}]},
-  {id:2,name:'Maria Consultoria',productId:2,value:null,stage:'prospect',priority:'low',status:'active',notes:[],createdAt:'2026-09-15T10:00:00.000Z',lastMoveAt:'2026-09-15T10:00:00.000Z',lastMoveStage:'prospect',stageHistory:[{stage:'prospect',date:'2026-09-15T10:00:00.000Z'}]},
-  {id:3,name:'Carlos & Irmãos',productId:3,value:52000,stage:'waiting',priority:'high',status:'active',notes:[],createdAt:'2026-07-20T10:00:00.000Z',lastMoveAt:'2026-09-01T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-07-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-10T10:00:00.000Z'},{stage:'waiting',date:'2026-09-01T10:00:00.000Z'}]},
-  {id:4,name:'Ana Oliveira',productId:1,value:8000,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2025-12-05T10:00:00.000Z',wonAt:'2026-01-10T10:00:00.000Z',lastMoveAt:'2026-01-10T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2025-12-05T10:00:00.000Z'},{stage:'negotiating',date:'2025-12-20T10:00:00.000Z'},{stage:'won',date:'2026-01-10T10:00:00.000Z'}]},
-  {id:5,name:'Pedro Souza',productId:1,value:6000,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-09-20T10:00:00.000Z',lastMoveAt:'2026-10-01T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-09-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-10-01T10:00:00.000Z'}]},
-  {id:6,name:'Beatriz Lima',productId:2,value:null,stage:'prospect',priority:'high',status:'active',notes:[],createdAt:'2026-09-28T10:00:00.000Z',lastMoveAt:'2026-09-28T10:00:00.000Z',lastMoveStage:'prospect',stageHistory:[{stage:'prospect',date:'2026-09-28T10:00:00.000Z'}]},
-  {id:7,name:'Ricardo Alves',productId:1,value:12000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-01-20T10:00:00.000Z',wonAt:'2026-02-14T10:00:00.000Z',lastMoveAt:'2026-02-14T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-01-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-02-05T10:00:00.000Z'},{stage:'won',date:'2026-02-14T10:00:00.000Z'}]},
-  {id:8,name:'Fernanda Castro',productId:3,value:38000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-02-10T10:00:00.000Z',wonAt:'2026-03-05T10:00:00.000Z',lastMoveAt:'2026-03-05T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-02-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-02-22T10:00:00.000Z'},{stage:'won',date:'2026-03-05T10:00:00.000Z'}]},
-  {id:9,name:'Lucas Mendes',productId:2,value:null,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-03-20T10:00:00.000Z',wonAt:'2026-04-18T10:00:00.000Z',lastMoveAt:'2026-04-18T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-03-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-05T10:00:00.000Z'},{stage:'won',date:'2026-04-18T10:00:00.000Z'}]},
-  {id:10,name:'Camila Torres',productId:1,value:9500,stage:'waiting',priority:'medium',status:'active',notes:[],createdAt:'2026-04-10T10:00:00.000Z',lastMoveAt:'2026-05-07T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-04-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-25T10:00:00.000Z'},{stage:'waiting',date:'2026-05-07T10:00:00.000Z'}]},
-  {id:11,name:'Bruno Ramos',productId:3,value:27000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-04-15T10:00:00.000Z',wonAt:'2026-05-22T10:00:00.000Z',lastMoveAt:'2026-05-22T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-04-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-05-05T10:00:00.000Z'},{stage:'won',date:'2026-05-22T10:00:00.000Z'}]},
-  {id:12,name:'Amanda Vieira',productId:2,value:null,stage:'prospect',priority:'low',status:'active',notes:[],createdAt:'2026-06-10T10:00:00.000Z',lastMoveAt:'2026-06-10T10:00:00.000Z',lastMoveStage:'prospect',stageHistory:[{stage:'prospect',date:'2026-06-10T10:00:00.000Z'}]},
-  {id:13,name:'Rafael Souza',productId:1,value:18000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-05-20T10:00:00.000Z',wonAt:'2026-06-25T10:00:00.000Z',lastMoveAt:'2026-06-25T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-05-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-06-08T10:00:00.000Z'},{stage:'won',date:'2026-06-25T10:00:00.000Z'}]},
-  {id:14,name:'Juliana Neves',productId:3,value:45000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-06-15T10:00:00.000Z',lastMoveAt:'2026-07-03T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-06-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-03T10:00:00.000Z'}]},
-  {id:15,name:'Gabriel Pinto',productId:2,value:null,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-06-25T10:00:00.000Z',wonAt:'2026-07-19T10:00:00.000Z',lastMoveAt:'2026-07-19T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-06-25T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-10T10:00:00.000Z'},{stage:'won',date:'2026-07-19T10:00:00.000Z'}]},
-  {id:16,name:'Larissa Freitas',productId:1,value:11000,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-07-15T10:00:00.000Z',wonAt:'2026-08-08T10:00:00.000Z',lastMoveAt:'2026-08-08T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-07-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-28T10:00:00.000Z'},{stage:'won',date:'2026-08-08T10:00:00.000Z'}]},
-  {id:17,name:'Thiago Carvalho',productId:3,value:61000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-08-01T10:00:00.000Z',wonAt:'2026-09-12T10:00:00.000Z',lastMoveAt:'2026-09-12T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-08-01T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-20T10:00:00.000Z'},{stage:'waiting',date:'2026-09-05T10:00:00.000Z'},{stage:'won',date:'2026-09-12T10:00:00.000Z'}]},
-  {id:18,name:'Priscila Martins',productId:2,value:null,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-08-15T10:00:00.000Z',lastMoveAt:'2026-08-30T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-08-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-30T10:00:00.000Z'}]},
-  {id:19,name:'Fernando Dias',productId:1,value:22000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-09-01T10:00:00.000Z',wonAt:'2026-10-02T10:00:00.000Z',lastMoveAt:'2026-10-02T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-09-01T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-18T10:00:00.000Z'},{stage:'won',date:'2026-10-02T10:00:00.000Z'}]},
-  {id:20,name:'Débora Lopes',productId:2,value:null,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-10-01T10:00:00.000Z',lastMoveAt:'2026-10-03T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-10-01T10:00:00.000Z'},{stage:'negotiating',date:'2026-10-03T10:00:00.000Z'}]},
+  [1,'João Ferreira',1,15000,'high',[['prospect','2026-08-10'],['negotiating','2026-09-15']]],
+  [2,'Maria Consultoria',2,null,'low',[['prospect','2026-09-15']]],
+  [3,'Carlos & Irmãos',3,52000,'high',[['prospect','2026-07-20'],['negotiating','2026-08-10'],['waiting','2026-09-01']]],
+  [4,'Ana Oliveira',1,8000,'medium',[['prospect','2025-12-05'],['negotiating','2025-12-20'],['won','2026-01-10']]],
+  [5,'Pedro Souza',1,6000,'medium',[['prospect','2026-09-20'],['negotiating','2026-10-01']]],
+  [6,'Beatriz Lima',2,null,'high',[['prospect','2026-09-28']]],
+  [7,'Ricardo Alves',1,12000,'high',[['prospect','2026-01-20'],['negotiating','2026-02-05'],['won','2026-02-14']]],
+  [8,'Fernanda Castro',3,38000,'high',[['prospect','2026-02-10'],['negotiating','2026-02-22'],['won','2026-03-05']]],
+  [9,'Lucas Mendes',2,null,'medium',[['prospect','2026-03-20'],['negotiating','2026-04-05'],['won','2026-04-18']]],
+  [10,'Camila Torres',1,9500,'medium',[['prospect','2026-04-10'],['negotiating','2026-04-25'],['waiting','2026-05-07']]],
+  [11,'Bruno Ramos',3,27000,'high',[['prospect','2026-04-15'],['negotiating','2026-05-05'],['won','2026-05-22']]],
+  [12,'Amanda Vieira',2,null,'low',[['prospect','2026-06-10']]],
+  [13,'Rafael Souza',1,18000,'high',[['prospect','2026-05-20'],['negotiating','2026-06-08'],['won','2026-06-25']]],
+  [14,'Juliana Neves',3,45000,'high',[['prospect','2026-06-15'],['negotiating','2026-07-03']]],
+  [15,'Gabriel Pinto',2,null,'medium',[['prospect','2026-06-25'],['negotiating','2026-07-10'],['won','2026-07-19']]],
+  [16,'Larissa Freitas',1,11000,'medium',[['prospect','2026-07-15'],['negotiating','2026-07-28'],['won','2026-08-08']]],
+  [17,'Thiago Carvalho',3,61000,'high',[['prospect','2026-08-01'],['negotiating','2026-08-20'],['waiting','2026-09-05'],['won','2026-09-12']]],
+  [18,'Priscila Martins',2,null,'medium',[['prospect','2026-08-15'],['negotiating','2026-08-30']]],
+  [19,'Fernando Dias',1,22000,'high',[['prospect','2026-09-01'],['negotiating','2026-09-18'],['won','2026-10-02']]],
+  [20,'Débora Lopes',2,null,'medium',[['prospect','2026-10-01'],['negotiating','2026-10-03']]],
   // Extra Crédito (pid:1) won leads — fills missing months
-  {id:21,name:'Fábio Monteiro',productId:1,value:7500,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-02-12T10:00:00.000Z',wonAt:'2026-03-20T10:00:00.000Z',lastMoveAt:'2026-03-20T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-02-12T10:00:00.000Z'},{stage:'negotiating',date:'2026-03-05T10:00:00.000Z'},{stage:'won',date:'2026-03-20T10:00:00.000Z'}]},
-  {id:22,name:'Tatiane Rocha',productId:1,value:13500,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-03-10T10:00:00.000Z',wonAt:'2026-04-22T10:00:00.000Z',lastMoveAt:'2026-04-22T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-03-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-01T10:00:00.000Z'},{stage:'won',date:'2026-04-22T10:00:00.000Z'}]},
-  {id:23,name:'Renato Barbosa',productId:1,value:10200,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-04-08T10:00:00.000Z',wonAt:'2026-05-14T10:00:00.000Z',lastMoveAt:'2026-05-14T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-04-08T10:00:00.000Z'},{stage:'negotiating',date:'2026-05-01T10:00:00.000Z'},{stage:'won',date:'2026-05-14T10:00:00.000Z'}]},
-  {id:24,name:'Simone Araújo',productId:1,value:8800,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-06-18T10:00:00.000Z',wonAt:'2026-07-25T10:00:00.000Z',lastMoveAt:'2026-07-25T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-06-18T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-10T10:00:00.000Z'},{stage:'won',date:'2026-07-25T10:00:00.000Z'}]},
-  {id:25,name:'Márcio Teixeira',productId:1,value:16000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-08-12T10:00:00.000Z',wonAt:'2026-09-18T10:00:00.000Z',lastMoveAt:'2026-09-18T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-08-12T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-01T10:00:00.000Z'},{stage:'won',date:'2026-09-18T10:00:00.000Z'}]},
+  [21,'Fábio Monteiro',1,7500,'medium',[['prospect','2026-02-12'],['negotiating','2026-03-05'],['won','2026-03-20']]],
+  [22,'Tatiane Rocha',1,13500,'high',[['prospect','2026-03-10'],['negotiating','2026-04-01'],['won','2026-04-22']]],
+  [23,'Renato Barbosa',1,10200,'medium',[['prospect','2026-04-08'],['negotiating','2026-05-01'],['won','2026-05-14']]],
+  [24,'Simone Araújo',1,8800,'medium',[['prospect','2026-06-18'],['negotiating','2026-07-10'],['won','2026-07-25']]],
+  [25,'Márcio Teixeira',1,16000,'high',[['prospect','2026-08-12'],['negotiating','2026-09-01'],['won','2026-09-18']]],
   // Extra Consórcio (pid:3) won leads — fills missing months
-  {id:26,name:'Patrícia Cunha',productId:3,value:32000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2025-12-10T10:00:00.000Z',wonAt:'2026-01-28T10:00:00.000Z',lastMoveAt:'2026-01-28T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2025-12-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-01-10T10:00:00.000Z'},{stage:'won',date:'2026-01-28T10:00:00.000Z'}]},
-  {id:27,name:'Augusto Leal',productId:3,value:48000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-01-15T10:00:00.000Z',wonAt:'2026-02-20T10:00:00.000Z',lastMoveAt:'2026-02-20T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-01-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-02-05T10:00:00.000Z'},{stage:'won',date:'2026-02-20T10:00:00.000Z'}]},
-  {id:28,name:'Cristina Melo',productId:3,value:55000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-03-05T10:00:00.000Z',wonAt:'2026-04-15T10:00:00.000Z',lastMoveAt:'2026-04-15T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-03-05T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-01T10:00:00.000Z'},{stage:'won',date:'2026-04-15T10:00:00.000Z'}]},
-  {id:29,name:'Henrique Braga',productId:3,value:41000,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-05-10T10:00:00.000Z',wonAt:'2026-06-18T10:00:00.000Z',lastMoveAt:'2026-06-18T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-05-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-06-03T10:00:00.000Z'},{stage:'won',date:'2026-06-18T10:00:00.000Z'}]},
-  {id:30,name:'Vanessa Campos',productId:3,value:67000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-06-20T10:00:00.000Z',wonAt:'2026-07-30T10:00:00.000Z',lastMoveAt:'2026-07-30T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-06-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-15T10:00:00.000Z'},{stage:'won',date:'2026-07-30T10:00:00.000Z'}]},
-  {id:31,name:'Rodrigo Fonseca',productId:3,value:39000,stage:'won',priority:'medium',status:'won',notes:[],createdAt:'2026-07-08T10:00:00.000Z',wonAt:'2026-08-22T10:00:00.000Z',lastMoveAt:'2026-08-22T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-07-08T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-05T10:00:00.000Z'},{stage:'won',date:'2026-08-22T10:00:00.000Z'}]},
-  {id:32,name:'Elaine Santana',productId:3,value:72000,stage:'won',priority:'high',status:'won',notes:[],createdAt:'2026-09-05T10:00:00.000Z',wonAt:'2026-10-01T10:00:00.000Z',lastMoveAt:'2026-10-01T10:00:00.000Z',lastMoveStage:'won',stageHistory:[{stage:'prospect',date:'2026-09-05T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-20T10:00:00.000Z'},{stage:'won',date:'2026-10-01T10:00:00.000Z'}]},
+  [26,'Patrícia Cunha',3,32000,'high',[['prospect','2025-12-10'],['negotiating','2026-01-10'],['won','2026-01-28']]],
+  [27,'Augusto Leal',3,48000,'high',[['prospect','2026-01-15'],['negotiating','2026-02-05'],['won','2026-02-20']]],
+  [28,'Cristina Melo',3,55000,'high',[['prospect','2026-03-05'],['negotiating','2026-04-01'],['won','2026-04-15']]],
+  [29,'Henrique Braga',3,41000,'medium',[['prospect','2026-05-10'],['negotiating','2026-06-03'],['won','2026-06-18']]],
+  [30,'Vanessa Campos',3,67000,'high',[['prospect','2026-06-20'],['negotiating','2026-07-15'],['won','2026-07-30']]],
+  [31,'Rodrigo Fonseca',3,39000,'medium',[['prospect','2026-07-08'],['negotiating','2026-08-05'],['won','2026-08-22']]],
+  [32,'Elaine Santana',3,72000,'high',[['prospect','2026-09-05'],['negotiating','2026-09-20'],['won','2026-10-01']]],
   // Leads históricos ativos em negociação/aguardando — populam gráficos de meses anteriores
-  {id:33,name:'Marcos Andrade',productId:1,value:14000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-01-08T10:00:00.000Z',lastMoveAt:'2026-01-20T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-01-08T10:00:00.000Z'},{stage:'negotiating',date:'2026-01-20T10:00:00.000Z'}]},
-  {id:34,name:'Sônia Batista',productId:2,value:null,stage:'waiting',priority:'medium',status:'active',notes:[],createdAt:'2026-01-15T10:00:00.000Z',lastMoveAt:'2026-01-28T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-01-15T10:00:00.000Z'},{stage:'negotiating',date:'2026-01-22T10:00:00.000Z'},{stage:'waiting',date:'2026-01-28T10:00:00.000Z'}]},
-  {id:35,name:'Eduardo Pires',productId:3,value:43000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-02-05T10:00:00.000Z',lastMoveAt:'2026-02-18T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-02-05T10:00:00.000Z'},{stage:'negotiating',date:'2026-02-18T10:00:00.000Z'}]},
-  {id:36,name:'Alessandra Cruz',productId:1,value:9200,stage:'waiting',priority:'medium',status:'active',notes:[],createdAt:'2026-03-02T10:00:00.000Z',lastMoveAt:'2026-03-15T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-03-02T10:00:00.000Z'},{stage:'negotiating',date:'2026-03-10T10:00:00.000Z'},{stage:'waiting',date:'2026-03-15T10:00:00.000Z'}]},
-  {id:37,name:'Nelson Gomes',productId:2,value:null,stage:'negotiating',priority:'low',status:'active',notes:[],createdAt:'2026-03-18T10:00:00.000Z',lastMoveAt:'2026-03-25T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-03-18T10:00:00.000Z'},{stage:'negotiating',date:'2026-03-25T10:00:00.000Z'}]},
-  {id:38,name:'Viviane Moura',productId:1,value:11500,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-04-03T10:00:00.000Z',lastMoveAt:'2026-04-14T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-04-03T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-14T10:00:00.000Z'}]},
-  {id:39,name:'Cláudio Ribeiro',productId:3,value:35000,stage:'waiting',priority:'high',status:'active',notes:[],createdAt:'2026-04-20T10:00:00.000Z',lastMoveAt:'2026-05-02T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-04-20T10:00:00.000Z'},{stage:'negotiating',date:'2026-04-28T10:00:00.000Z'},{stage:'waiting',date:'2026-05-02T10:00:00.000Z'}]},
-  {id:40,name:'Ingrid Ferreira',productId:2,value:null,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-05-08T10:00:00.000Z',lastMoveAt:'2026-05-18T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-05-08T10:00:00.000Z'},{stage:'negotiating',date:'2026-05-18T10:00:00.000Z'}]},
-  {id:41,name:'Osvaldo Nunes',productId:1,value:17500,stage:'waiting',priority:'medium',status:'active',notes:[],createdAt:'2026-06-05T10:00:00.000Z',lastMoveAt:'2026-06-20T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-06-05T10:00:00.000Z'},{stage:'negotiating',date:'2026-06-12T10:00:00.000Z'},{stage:'waiting',date:'2026-06-20T10:00:00.000Z'}]},
-  {id:42,name:'Tereza Nogueira',productId:3,value:58000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-06-28T10:00:00.000Z',lastMoveAt:'2026-07-08T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-06-28T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-08T10:00:00.000Z'}]},
-  {id:43,name:'Roberto Azevedo',productId:1,value:13000,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-07-10T10:00:00.000Z',lastMoveAt:'2026-07-22T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-07-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-07-22T10:00:00.000Z'}]},
-  {id:44,name:'Adriana Cavalcante',productId:2,value:null,stage:'waiting',priority:'low',status:'active',notes:[],createdAt:'2026-07-25T10:00:00.000Z',lastMoveAt:'2026-08-05T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-07-25T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-01T10:00:00.000Z'},{stage:'waiting',date:'2026-08-05T10:00:00.000Z'}]},
-  {id:45,name:'Leandro Corrêa',productId:3,value:47000,stage:'negotiating',priority:'high',status:'active',notes:[],createdAt:'2026-08-10T10:00:00.000Z',lastMoveAt:'2026-08-25T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-08-10T10:00:00.000Z'},{stage:'negotiating',date:'2026-08-25T10:00:00.000Z'}]},
-  {id:46,name:'Mônica Silveira',productId:1,value:8500,stage:'waiting',priority:'medium',status:'active',notes:[],createdAt:'2026-09-02T10:00:00.000Z',lastMoveAt:'2026-09-10T10:00:00.000Z',lastMoveStage:'waiting',stageHistory:[{stage:'prospect',date:'2026-09-02T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-07T10:00:00.000Z'},{stage:'waiting',date:'2026-09-10T10:00:00.000Z'}]},
-  {id:47,name:'Diego Pacheco',productId:2,value:null,stage:'negotiating',priority:'medium',status:'active',notes:[],createdAt:'2026-09-12T10:00:00.000Z',lastMoveAt:'2026-09-22T10:00:00.000Z',lastMoveStage:'negotiating',stageHistory:[{stage:'prospect',date:'2026-09-12T10:00:00.000Z'},{stage:'negotiating',date:'2026-09-22T10:00:00.000Z'}]},
-];
-function loadLeadsWithDefaults(){
-  const stored=load('crm_leads2',null);
-  if(!stored) return fixLeads(_defaultLeads);
-  const existingIds=new Set(stored.map(x=>x.id));
-  const toAdd=_defaultLeads.filter(x=>!existingIds.has(x.id));
-  const merged=[...stored,...toAdd];
-  if(toAdd.length>0) save('crm_leads2',merged);
-  return fixLeads(merged);
-}
-let leads=loadLeadsWithDefaults();
+  [33,'Marcos Andrade',1,14000,'high',[['prospect','2026-01-08'],['negotiating','2026-01-20']]],
+  [34,'Sônia Batista',2,null,'medium',[['prospect','2026-01-15'],['negotiating','2026-01-22'],['waiting','2026-01-28']]],
+  [35,'Eduardo Pires',3,43000,'high',[['prospect','2026-02-05'],['negotiating','2026-02-18']]],
+  [36,'Alessandra Cruz',1,9200,'medium',[['prospect','2026-03-02'],['negotiating','2026-03-10'],['waiting','2026-03-15']]],
+  [37,'Nelson Gomes',2,null,'low',[['prospect','2026-03-18'],['negotiating','2026-03-25']]],
+  [38,'Viviane Moura',1,11500,'high',[['prospect','2026-04-03'],['negotiating','2026-04-14']]],
+  [39,'Cláudio Ribeiro',3,35000,'high',[['prospect','2026-04-20'],['negotiating','2026-04-28'],['waiting','2026-05-02']]],
+  [40,'Ingrid Ferreira',2,null,'medium',[['prospect','2026-05-08'],['negotiating','2026-05-18']]],
+  [41,'Osvaldo Nunes',1,17500,'medium',[['prospect','2026-06-05'],['negotiating','2026-06-12'],['waiting','2026-06-20']]],
+  [42,'Tereza Nogueira',3,58000,'high',[['prospect','2026-06-28'],['negotiating','2026-07-08']]],
+  [43,'Roberto Azevedo',1,13000,'medium',[['prospect','2026-07-10'],['negotiating','2026-07-22']]],
+  [44,'Adriana Cavalcante',2,null,'low',[['prospect','2026-07-25'],['negotiating','2026-08-01'],['waiting','2026-08-05']]],
+  [45,'Leandro Corrêa',3,47000,'high',[['prospect','2026-08-10'],['negotiating','2026-08-25']]],
+  [46,'Mônica Silveira',1,8500,'medium',[['prospect','2026-09-02'],['negotiating','2026-09-07'],['waiting','2026-09-10']]],
+  [47,'Diego Pacheco',2,null,'medium',[['prospect','2026-09-12'],['negotiating','2026-09-22']]],
+].map(([id,name,productId,value,priority,hist])=>{
+  const [stage,last]=hist[hist.length-1];
+  const won=stage==='won';
+  return {id,name,productId,value,stage,priority,status:won?'won':'active',notes:[],createdAt:_T(hist[0][1]),...(won?{wonAt:_T(last)}:{}),lastMoveAt:_T(last),lastMoveStage:stage,stageHistory:hist.map(([stage,date])=>({stage,date:_T(date)}))};
+});
+// Demo leads only seed an empty CRM; once there is saved data, deleted demo leads stay deleted
+let leads=fixLeads(load('crm_leads2',_defaultLeads));
+const _inDays=n=>{const d=new Date();d.setDate(d.getDate()+n);return d.toISOString().split('T')[0]};
 let appointments=load('crm_appts2',[
-  {id:1,name:'João Ferreira',detail:'Apresentação proposta',time:'09:00',date:new Date().toISOString().split('T')[0],done:false,urgency:'high'},
-  {id:2,name:'Reunião interna',detail:'Revisão metas do mês',time:'14:00',date:new Date().toISOString().split('T')[0],done:true,urgency:'medium'},
-  {id:3,name:'Maria Consultoria',detail:'Follow-up contrato',time:'10:30',date:new Date().toISOString().split('T')[0],done:false,urgency:'medium'},
-  {id:4,name:'Carlos & Irmãos',detail:'Negociação consórcio',time:'15:00',date:(()=>{const d=new Date();d.setDate(d.getDate()+1);return d.toISOString().split('T')[0]})(),done:false,urgency:'high'},
-  {id:5,name:'Pedro Souza',detail:'Demo do produto',time:'11:00',date:(()=>{const d=new Date();d.setDate(d.getDate()+1);return d.toISOString().split('T')[0]})(),done:false,urgency:'low'},
-  {id:6,name:'Beatriz Lima',detail:'Assinatura contrato',time:'16:00',date:(()=>{const d=new Date();d.setDate(d.getDate()+2);return d.toISOString().split('T')[0]})(),done:false,urgency:'high'},
-  {id:7,name:'Almoço com parceiro',detail:'Discussão parceria',time:'12:00',date:(()=>{const d=new Date();d.setDate(d.getDate()-1);return d.toISOString().split('T')[0]})(),done:true,urgency:'medium'},
-  {id:8,name:'Thiago Carvalho',detail:'Revisão proposta consórcio',time:'09:30',date:(()=>{const d=new Date();d.setDate(d.getDate()+3);return d.toISOString().split('T')[0]})(),done:false,urgency:'medium'},
+  {id:1,name:'João Ferreira',detail:'Apresentação proposta',time:'09:00',date:_inDays(0),done:false,urgency:'high'},
+  {id:2,name:'Reunião interna',detail:'Revisão metas do mês',time:'14:00',date:_inDays(0),done:true,urgency:'medium'},
+  {id:3,name:'Maria Consultoria',detail:'Follow-up contrato',time:'10:30',date:_inDays(0),done:false,urgency:'medium'},
+  {id:4,name:'Carlos & Irmãos',detail:'Negociação consórcio',time:'15:00',date:_inDays(1),done:false,urgency:'high'},
+  {id:5,name:'Pedro Souza',detail:'Demo do produto',time:'11:00',date:_inDays(1),done:false,urgency:'low'},
+  {id:6,name:'Beatriz Lima',detail:'Assinatura contrato',time:'16:00',date:_inDays(2),done:false,urgency:'high'},
+  {id:7,name:'Almoço com parceiro',detail:'Discussão parceria',time:'12:00',date:_inDays(-1),done:true,urgency:'medium'},
+  {id:8,name:'Thiago Carvalho',detail:'Revisão proposta consórcio',time:'09:30',date:_inDays(3),done:false,urgency:'medium'},
 ]);
 
 // ── AGENDA ────────────────────────────────────────────────────
@@ -148,13 +149,12 @@ function renderAgenda(){
   const now=new Date();
   const todayStr=today();
   const selStr=selectedDate||todayStr;
-  const URGENCY_ORDER={high:0,medium:1,low:2};
   const selAppts=appointments
     .filter(a=>(a.date||todayStr)===selStr&&!a.done)
-    .sort((a,b)=>{const u=URGENCY_ORDER[a.urgency||'medium']-URGENCY_ORDER[b.urgency||'medium'];return u!==0?u:a.time.localeCompare(b.time);})
+    .sort((a,b)=>{const u=PRIORITY_ORDER[a.urgency||'medium']-PRIORITY_ORDER[b.urgency||'medium'];return u!==0?u:a.time.localeCompare(b.time);})
     .concat(appointments.filter(a=>(a.date||todayStr)===selStr&&a.done).sort((a,b)=>a.time.localeCompare(b.time)));
   const todayAppts=appointments.filter(a=>(a.date||todayStr)===todayStr);
-  const _contaIds=new Set(products.filter(p=>p.name.toLowerCase().includes('conta')).map(p=>p.id));
+  const _contaIds=contaIds();
   const activeVal=leads.filter(l=>l.status==='active'&&!_contaIds.has(l.productId)&&['prospect','negotiating','waiting'].includes(l.stage)).reduce((s,l)=>s+(l.value||0),0);
   const selD=new Date(selStr+'T12:00:00');
   const isToday=selStr===todayStr;
@@ -259,8 +259,8 @@ function setAgendaView(v){agendaView=v;weekExpanded=false;renderAgenda();}
 function toggleWeekView(){if(agendaView==='week'){weekExpanded=!weekExpanded;}else{agendaView='week';weekExpanded=false;}renderAgenda();}
 function shiftMonth(d){monthOffset+=d;renderAgenda();}
 function toggleApptDone(id){const a=appointments.find(x=>x.id===id);if(a){a.done=!a.done;save('crm_appts2',appointments);renderAgenda();}}
-function openCtxMenu(e,id){e.stopPropagation();openApptMenu(e,id);}
-function openApptMenu(e,id){
+function openCtxMenu(e,id){
+  e.stopPropagation();
   document.querySelectorAll('.ctx-menu').forEach(m=>m.remove());
   const menu=document.createElement('div');
   menu.className='ctx-menu';
@@ -291,7 +291,6 @@ function renderOverview(){
   const waiting=active.filter(l=>l.stage==='waiting').length;
 
   const now=new Date();const thisMonth=now.getMonth();const thisYear=now.getFullYear();
-  const isContaProduct=p=>p.name.toLowerCase().includes('conta');
 
   // Won this month only
   const wonThisMonth=won.filter(l=>{
@@ -300,8 +299,8 @@ function renderOverview(){
   });
 
   // Pipeline value: only active leads from non-Conta products with value set
-  const contaIds=new Set(products.filter(p=>isContaProduct(p)).map(p=>p.id));
-  const activeVal=active.filter(l=>l.value!=null&&l.value>0&&!contaIds.has(l.productId)&&['prospect','negotiating','waiting'].includes(l.stage))
+  const _contaIds=contaIds();
+  const activeVal=active.filter(l=>l.value!=null&&l.value>0&&!_contaIds.has(l.productId)&&['prospect','negotiating','waiting'].includes(l.stage))
     .reduce((s,l)=>s+l.value,0);
 
   const globalStats=`
@@ -400,17 +399,17 @@ function renderManagement(){
     const months=Array.from({length:12},(_,i)=>({month:i,revenue:0,leads:0,won:0,lost:0,negotiating:0,waiting:0}));
     leads.forEach(l=>{
       if(pid&&l.productId!==pid)return;
-      // leads gerados by createdAt month
+      // leads gerados / lost by createdAt month
       const dc=new Date(l.createdAt||0);
-      if(dc.getFullYear()===yr){const m=dc.getMonth();months[m].leads++;}
+      if(dc.getFullYear()===yr){
+        months[dc.getMonth()].leads++;
+        if(l.status==='trash'&&l.stage==='lost')months[dc.getMonth()].lost++;
+      }
       // revenue/won by wonAt (fallback to createdAt)
       if(l.status==='won'){
         const dw=new Date(l.wonAt||l.createdAt||0);
         if(dw.getFullYear()===yr){const m=dw.getMonth();months[m].won++;months[m].revenue+=(l.value||0);}
       }
-      // lost by createdAt
-      const dl=new Date(l.createdAt||0);
-      if(dl.getFullYear()===yr&&l.status==='trash'&&l.stage==='lost'){months[dl.getMonth()].lost++;}
       // negociando/aguardando: conta em todos os meses desde que entrou na etapa até hoje
       if(l.status==='active'&&(l.stage==='negotiating'||l.stage==='waiting')){
         const dm=new Date(l.lastMoveAt||l.createdAt||0);
@@ -441,18 +440,16 @@ function renderManagement(){
   }
   const allData=getMonthlyData(null);
   const totalLeadsAll=leads.length;
-  const totalWonAll=leads.filter(l=>l.status==='won').length;
-  const totalWon=totalWonAll; // alias for display
+  const totalWon=leads.filter(l=>l.status==='won').length;
   const totalLost=leads.filter(l=>l.status==='trash'&&l.stage==='lost').length;
   const totalRev=leads.filter(l=>l.status==='won').reduce((s,l)=>s+(l.value||0),0);
-  const _isContaP=p=>p&&p.name.toLowerCase().includes('conta');
-  const totalPot=leads.filter(l=>{const p=products.find(x=>x.id===l.productId);return !_isContaP(p)&&l.status==='active'&&l.value&&['prospect','negotiating','waiting'].includes(l.stage);}).reduce((s,l)=>s+(l.value||0),0);
+  const totalPot=leads.filter(l=>{const p=products.find(x=>x.id===l.productId);return !isContaProduct(p)&&l.status==='active'&&l.value&&['prospect','negotiating','waiting'].includes(l.stage);}).reduce((s,l)=>s+(l.value||0),0);
   const prodSections=products.map(p=>{
     const pd=getMonthlyData(p.id);
     const pLeads=leads.filter(l=>l.productId===p.id);
     const pWon=pLeads.filter(l=>l.status==='won');
     const pRev=pWon.reduce((s,l)=>s+(l.value||0),0);
-    const pPot=_isContaP(p)?0:pLeads.filter(l=>l.status==='active'&&l.value&&['prospect','negotiating','waiting'].includes(l.stage)).reduce((s,l)=>s+(l.value||0),0);
+    const pPot=isContaProduct(p)?0:pLeads.filter(l=>l.status==='active'&&l.value&&['prospect','negotiating','waiting'].includes(l.stage)).reduce((s,l)=>s+(l.value||0),0);
     return `<div class="mgmt-product-section">
       <div class="section-title" style="margin-bottom:12px">
         <span style="color:${p.color}">${p.icon} ${p.name}</span>
@@ -508,7 +505,6 @@ function renderManagement(){
 }
 
 // ── PIPELINE ──────────────────────────────────────────────────
-const PRIORITY_ORDER={high:0,medium:1,low:2};
 function sortByPriority(arr){return arr.slice().sort((a,b)=>(PRIORITY_ORDER[a.priority||'medium']-PRIORITY_ORDER[b.priority||'medium']));}
 function renderPipeline(){
   const baseLeads=leads.filter(l=>pipelinePid==='all'||l.productId==pipelinePid);
@@ -530,7 +526,6 @@ function renderPipeline(){
   const trashCount=baseLeads.filter(l=>l.status==='trash').length;
   const recycleCount=baseLeads.filter(l=>l.status==='recycle').length;
   const wonCount=baseLeads.filter(l=>l.status==='won').length;
-  const hotLeads=[];
   const opts=`<option value="all" ${pipelinePid==='all'?'selected':''}>Todos os produtos</option>`+
     products.map(p=>`<option value="${p.id}" ${pipelinePid===p.id?'selected':''}>${p.icon} ${p.name}</option>`).join('');
 
@@ -606,62 +601,17 @@ function renderPipeline(){
         <button class="filter-chip recycle-chip ${pipelineFilter==='recycle'?'active':''}" onclick="setF('recycle')"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> ${recycleCount}</button>
         <button class="filter-chip won-chip ${pipelineFilter==='won'?'active':''}" onclick="setF('won')"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> ${wonCount}</button>
       </div>
-      ${showKanban ? kanbanBoard : `
-        ${pipelineFilter==='all'&&hotLeads.length>0?'<div class="hot-section-label"><div class="pulse"></div> Leads Quentes — Prioridade</div>':''}
-        ${listCards||'<div class="empty-state">Nenhum lead aqui.</div>'}
-      `}
+      ${showKanban ? kanbanBoard : (listCards||'<div class="empty-state">Nenhum lead aqui.</div>')}
     </div>`;
 }
 
-function buildLeadCard(l){
-  const prod=products.find(p=>p.id===l.productId);
-  const lastNote=l.notes&&l.notes.length>0?l.notes[l.notes.length-1]:null;
-  const isTrash=l.status==='trash';
-  const isRecycle=l.status==='recycle';
-  const isWon=l.status==='won';
-  const isInactive=isTrash||isRecycle||isWon;
-  const statusBanner=isTrash
-    ?'<div class="status-banner status-trash">🗑️ Sem interesse</div>'
-    :isRecycle
-    ?'<div class="status-banner status-recycle">♻️ Para trabalhar depois</div>'
-    :isWon
-    ?'<div class="status-banner status-won">💰 Ganha!</div>'
-    :'';
-
-  if(isInactive) return `<div class="lead-card ${isTrash?'trashed':isRecycle?'recycled':'gained'}">
-    ${statusBanner}
-    <div class="lead-top"><div class="lead-name">${l.name}</div></div>
-    <div class="lead-product-row">
-      <span class="lead-product-name">${prod?prod.icon+' '+prod.name:'—'}</span>
-      <span class="lead-product-dates">${l.createdAt?'Criação '+new Date(l.createdAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):''} · Last Move ${new Date(l.lastMoveAt||l.createdAt||0).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} (${STAGE_LABELS[l.lastMoveStage||l.stage]||l.stage})</span>
-    </div>
-    <div class="lead-meta">
-      <div class="lead-value">${l.value!=null?'R$ '+l.value.toLocaleString('pt-BR'):'—'}</div>
-    </div>
-    <div class="lead-actions">
-      <button class="lead-action-btn success" onclick="event.stopPropagation();restoreLead(${l.id})">↩️ Restaurar</button>
-      <button class="lead-action-btn danger" onclick="event.stopPropagation();deleteLead(${l.id})">🗑️ Excluir</button>
-    </div>
-  </div>`;
-
-  // active lead — clickable card + chevron
-  const todayStr=today();
-  return `<div class="lead-card stage-card-${l.stage}" id="lcard-${l.id}" onclick="openEditLeadModal(${l.id})">
-    <button class="lead-chevron" onclick="event.stopPropagation();toggleLeadMenu(${l.id})">›</button>
-    <div class="lead-top" style="padding-right:28px">
-      <div class="lead-name">${l.name}</div>
-
-    </div>
-    <div class="lead-product-row">
-      <span class="lead-product-name">${prod?prod.icon+' '+prod.name:'—'}</span>
-      <span class="lead-product-dates">${l.createdAt?'Criação '+new Date(l.createdAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):''} · Last Move ${new Date(l.lastMoveAt||l.createdAt||0).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} (${STAGE_LABELS[l.lastMoveStage||l.stage]||l.stage})</span>
-    </div>
-    <div class="lead-meta">
-      <div class="lead-stage stage-${l.stage}">${STAGE_LABELS[l.stage]}</div>
-      <div class="lead-value">${l.value!=null?'R$ '+l.value.toLocaleString('pt-BR'):'—'}</div>
-    </div>
-    ${lastNote?`<div class="lead-note-preview">💬 ${lastNote.text.substring(0,80)}${lastNote.text.length>80?'...':''}</div>`:''}
-
+// "Criação dd/mm · Last Move dd/mm (etapa)"
+function leadDatesText(l){
+  return `${l.createdAt?'Criação '+new Date(l.createdAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):''} · Last Move ${new Date(l.lastMoveAt||l.createdAt||0).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})} (${STAGE_LABELS[l.lastMoveStage||l.stage]||l.stage})`;
+}
+// Quick menu (›) + inline note + inline schedule, shared by list and kanban cards
+function leadQuickMenusHtml(l){
+  return `
     <!-- QUICK MENU -->
     <div class="lead-quick-menu" id="lmenu-${l.id}">
       <button class="lead-quick-item" onclick="event.stopPropagation();showInlineNote(${l.id})">✏️ Registrar informação</button>
@@ -695,7 +645,7 @@ function buildLeadCard(l){
     <!-- INLINE SCHEDULE -->
     <div class="lead-inline-sched" id="lsched-${l.id}" onclick="event.stopPropagation()">
       <div class="lead-sched-row">
-        <input type="date" class="lead-sched-input" id="lsched-date-${l.id}" value="${todayStr}"/>
+        <input type="date" class="lead-sched-input" id="lsched-date-${l.id}" value="${today()}"/>
         <input type="time" class="lead-sched-input" id="lsched-time-${l.id}" value="09:00" style="flex:.7"/>
         <button class="lead-sched-confirm" onclick="saveInlineSched(${l.id})">✓</button>
       </div>
@@ -705,7 +655,50 @@ function buildLeadCard(l){
         <button class="nl-priority-pill" data-u="high" onclick="selectInlineSchedU(this,${l.id})">Alta</button>
       </div>
       <input type="hidden" id="lsched-urgency-${l.id}" value="medium"/>
+    </div>`;
+}
+
+function buildLeadCard(l){
+  const prod=products.find(p=>p.id===l.productId);
+  const lastNote=l.notes&&l.notes.length>0?l.notes[l.notes.length-1]:null;
+  const productRow=`<div class="lead-product-row">
+      <span class="lead-product-name">${prod?prod.icon+' '+prod.name:'—'}</span>
+      <span class="lead-product-dates">${leadDatesText(l)}</span>
+    </div>`;
+  const valueHtml=`<div class="lead-value">${l.value!=null?'R$ '+l.value.toLocaleString('pt-BR'):'—'}</div>`;
+
+  // inactive lead (trash / recycle / won) — status banner + restore/delete
+  const inactive={
+    trash:['trashed','<div class="status-banner status-trash">🗑️ Sem interesse</div>'],
+    recycle:['recycled','<div class="status-banner status-recycle">♻️ Para trabalhar depois</div>'],
+    won:['gained','<div class="status-banner status-won">💰 Ganha!</div>'],
+  }[l.status];
+  if(inactive) return `<div class="lead-card ${inactive[0]}">
+    ${inactive[1]}
+    <div class="lead-top"><div class="lead-name">${l.name}</div></div>
+    ${productRow}
+    <div class="lead-meta">
+      ${valueHtml}
     </div>
+    <div class="lead-actions">
+      <button class="lead-action-btn success" onclick="event.stopPropagation();restoreLead(${l.id})">↩️ Restaurar</button>
+      <button class="lead-action-btn danger" onclick="event.stopPropagation();deleteLead(${l.id})">🗑️ Excluir</button>
+    </div>
+  </div>`;
+
+  // active lead — clickable card + chevron
+  return `<div class="lead-card stage-card-${l.stage}" id="lcard-${l.id}" onclick="openEditLeadModal(${l.id})">
+    <button class="lead-chevron" onclick="event.stopPropagation();toggleLeadMenu(${l.id})">›</button>
+    <div class="lead-top" style="padding-right:28px">
+      <div class="lead-name">${l.name}</div>
+    </div>
+    ${productRow}
+    <div class="lead-meta">
+      <div class="lead-stage stage-${l.stage}">${STAGE_LABELS[l.stage]}</div>
+      ${valueHtml}
+    </div>
+    ${lastNote?`<div class="lead-note-preview">💬 ${lastNote.text.substring(0,80)}${lastNote.text.length>80?'...':''}</div>`:''}
+    ${leadQuickMenusHtml(l)}
   </div>`;
 }
 
@@ -750,8 +743,7 @@ function moveLeadStage(id,stage){
   save('crm_leads2',leads);
   closeLeadMenu(id);
   renderContent();
-  const labels={...STAGE_LABELS,recycle:'Reciclagem'};
-  showToast('Lead movido para '+(labels[stage]||stage));
+  showToast('Lead movido para '+(STAGE_LABELS[stage]||stage));
 }
 function toggleLeadMenu(id){
   const menu=document.getElementById('lmenu-'+id);
@@ -819,8 +811,7 @@ function saveInlineSched(id){
 }
 
 function buildKanban(activeLeads){
-  const PRIORITY_ORDER={high:0,medium:1,low:2};
-  activeLeads=activeLeads.slice().sort((a,b)=>(PRIORITY_ORDER[a.priority||'medium']-PRIORITY_ORDER[b.priority||'medium']));
+  activeLeads=sortByPriority(activeLeads);
   function makeCard(l){
     const prod=products.find(p=>p.id===l.productId);
     const val=l.value!=null?`R$ ${l.value.toLocaleString('pt-BR')}`:'—';
@@ -834,45 +825,7 @@ function buildKanban(activeLeads){
       <div class="lead-product-dates" style="font-size:9px;color:var(--muted);margin:2px 0 4px">${prod?prod.icon+' '+prod.name:''}${l.createdAt?' · Criação '+new Date(l.createdAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):''} · Last Move ${new Date(l.lastMoveAt||l.createdAt||0).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})} (${STAGE_LABELS[l.lastMoveStage||l.stage]||l.stage})</div>
       <div class="kanban-card-val">${val}</div>
       ${l.notes&&l.notes.length>0?`<div class="lead-note-preview" style="margin-bottom:4px">💬 ${l.notes[l.notes.length-1].text.substring(0,70)}${l.notes[l.notes.length-1].text.length>70?'...':''}</div>`:''}
-      <div class="lead-quick-menu" id="lmenu-${l.id}">
-        <button class="lead-quick-item" onclick="event.stopPropagation();showInlineNote(${l.id})">✏️ Registrar informação</button>
-        <button class="lead-quick-item" onclick="event.stopPropagation();showInlineSched(${l.id})">📅 Agendar reunião</button>
-        <button class="lead-quick-item lead-quick-item--has-sub" onclick="event.stopPropagation();toggleStageSubmenu(${l.id})">
-          <span>⏩ Mover no funil</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <div class="lead-stage-submenu" id="lstages-${l.id}">
-          ${[...STAGES,{key:'recycle',label:'♻️ Reciclagem',color:'#00e57a'}].map(item=>{const key=item.key||item,label=item.label||(STAGE_LABELS[item]),color=item.color||(STAGE_COLORS[item]);return key!==l.stage?`<button class="lead-stage-option" onclick="event.stopPropagation();moveLeadStage(${l.id},'${key}')" style="color:${color}">${label}</button>`:''}).join('')}
-        </div>
-        <button class="lead-quick-item lead-quick-item--has-sub" onclick="event.stopPropagation();togglePrioritySubmenu(${l.id})">
-          <span>🎯 Definir prioridade</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <div class="lead-stage-submenu" id="lpriority-${l.id}">
-          <button class="lead-stage-option" style="color:#ff5c35" onclick="event.stopPropagation();setLeadPriority(${l.id},'high')">Alta</button>
-          <button class="lead-stage-option" style="color:#ffb800" onclick="event.stopPropagation();setLeadPriority(${l.id},'medium')">Média</button>
-          <button class="lead-stage-option" style="color:#4d8dff" onclick="event.stopPropagation();setLeadPriority(${l.id},'low')">Baixa</button>
-        </div>
-      </div>
-      <div class="lead-inline-note" id="lnote-${l.id}" onclick="event.stopPropagation()">
-        <div class="lead-inline-row">
-          <input class="lead-inline-input" id="lnote-input-${l.id}" placeholder="Digite a informação..." onkeydown="if(event.key==='Enter')saveInlineNote(${l.id})"/>
-          <button class="lead-inline-send" onclick="saveInlineNote(${l.id})">Salvar</button>
-        </div>
-      </div>
-      <div class="lead-inline-sched" id="lsched-${l.id}" onclick="event.stopPropagation()">
-        <div class="lead-sched-row">
-          <input type="date" class="lead-sched-input" id="lsched-date-${l.id}" value="${today()}"/>
-          <input type="time" class="lead-sched-input" id="lsched-time-${l.id}" value="09:00" style="flex:.7"/>
-          <button class="lead-sched-confirm" onclick="saveInlineSched(${l.id})">✓</button>
-        </div>
-        <div class="nl-priority-pills" id="lsched-upills-${l.id}" style="margin-top:6px">
-          <button class="nl-priority-pill" data-u="low" onclick="selectInlineSchedU(this,${l.id})">Baixa</button>
-          <button class="nl-priority-pill active" data-u="medium" onclick="selectInlineSchedU(this,${l.id})">Média</button>
-          <button class="nl-priority-pill" data-u="high" onclick="selectInlineSchedU(this,${l.id})">Alta</button>
-        </div>
-        <input type="hidden" id="lsched-urgency-${l.id}" value="medium"/>
-      </div>
+      ${leadQuickMenusHtml(l)}
     </div>`;
   }
 
@@ -955,42 +908,6 @@ function kDrop(e,stage){
 function setPipelineView(v){pipelineView=v;renderPipeline();}
 function setPid(v){pipelinePid=v==='all'?'all':parseInt(v);pipelineFilter='all';renderPipeline();}
 function setF(f){pipelineFilter=f;renderPipeline();}
-function cycleStage(id){
-  const l=leads.find(x=>x.id===id);if(!l)return;
-  const idx=STAGES.indexOf(l.stage);
-  const nextStage=STAGES[(idx+1)%STAGES.length];
-  moveLeadStage(id,nextStage);
-}
-
-// Lead status menu (⋯ button on cards)
-let _leadStatusId=null;
-function openLeadStatusMenu(e,id){
-  e.stopPropagation();
-  _leadStatusId=id;
-  const menu=document.getElementById('ctxMenu');
-  // temporarily repurpose ctx menu for lead actions
-  menu.innerHTML=`
-    <div class="ctx-item" onclick="setLeadStatus('trash')">🗑️ Sem interesse</div>
-    <div class="ctx-item" onclick="setLeadStatus('recycle')">♻️ Reciclagem</div>`;
-  menu.style.display='block';
-  const x=Math.min(e.clientX,window.innerWidth-200);
-  const y=Math.min(e.clientY+4,window.innerHeight-100);
-  menu.style.left=x+'px';menu.style.top=y+'px';
-  setTimeout(()=>document.addEventListener('click',closeLeadStatusMenu,{once:true}),10);
-}
-function closeLeadStatusMenu(){
-  const menu=document.getElementById('ctxMenu');
-  menu.style.display='none';
-  // restore original ctx menu content
-  menu.innerHTML=`<div class="ctx-item" onclick="rescheduleAppt(${id});this.closest('.ctx-menu').remove()">🗓️ Remarcar</div><div class="ctx-item danger" onclick="deleteAppt(${id});this.closest('.ctx-menu').remove()">🗑️ Remover compromisso</div>`;
-  _leadStatusId=null;
-}
-function setLeadStatus(status){
-  if(status==='won'){const _lsu=leads.find(l=>l.id===currentLeadId);if(_lsu&&!_lsu.wonAt)_lsu.wonAt=new Date().toISOString();}
-  const l=leads.find(x=>x.id===_leadStatusId);
-  if(l){l.status=status;save('crm_leads2',leads);}
-  closeLeadStatusMenu();renderContent();
-}
 function restoreLead(id){
   const l=leads.find(x=>x.id===id);
   if(l){l.status='active';l.stage='prospect';save('crm_leads2',leads);}
@@ -1023,8 +940,6 @@ function openLeadNotes(leadId){
   sub+=`<div style="display:flex;gap:16px;margin-top:6px;flex-wrap:wrap"><span style="font-size:10px;color:var(--muted)">📅 Criação: ${_createDate}</span><span style="font-size:10px;color:var(--muted)">Last Move: ${_moveDate} · ${_moveStage}</span></div>`;
   document.getElementById('notesSub').innerHTML=sub;
   document.getElementById('noteText').value='';
-  selectedTags=[];
-  document.querySelectorAll('#notesModal .quick-tag').forEach(t=>t.classList.remove('selected'));
   renderNotesHistory(l);
   openModal('notesModal');
 }
@@ -1040,15 +955,13 @@ function renderNotesHistory(l){
 function saveNote(){
   const l=leads.find(x=>x.id===currentLeadId);if(!l)return;
   const text=document.getElementById('noteText').value.trim();
-  if(text||selectedTags.length>0){
+  if(text){
     if(!l.notes)l.notes=[];
-    l.notes.push({date:new Date().toISOString(),text:text||'(sem texto)',tags:[...selectedTags]});
+    l.notes.push({date:new Date().toISOString(),text,tags:[]});
   }
   save('crm_leads2',leads);
   renderNotesHistory(l);
   document.getElementById('noteText').value='';
-  selectedTags=[];
-  document.querySelectorAll('#notesModal .quick-tag').forEach(t=>t.classList.remove('selected'));
   const btn=document.getElementById('noteSaveBtn');
   btn.textContent='✅ Salvo!';
   setTimeout(()=>btn.textContent='💾 Salvar',1400);
@@ -1071,10 +984,8 @@ function openAddLeadModal(){
   document.getElementById('nl-appt-date').value=today();
   document.getElementById('nl-stage').value='prospect';
   document.getElementById('nl-priority').value='medium';
-  document.querySelectorAll('.nl-priority-pill').forEach((b,i)=>b.classList.toggle('active',b.dataset.p==='medium'));
   const stageLbl=document.getElementById('dd-stage-label');if(stageLbl)stageLbl.textContent='Prospecção';
   document.querySelectorAll('#dd-stage-list .nl-dropdown-item').forEach((el,i)=>el.classList.toggle('selected',i===0));
-  // origin removed
   document.getElementById('agendaSection').style.display='none';
   const arrow=document.getElementById('nl-agenda-arrow');if(arrow)arrow.classList.remove('open');
   document.getElementById('nl-appt-urgency').value='medium';
@@ -1082,7 +993,6 @@ function openAddLeadModal(){
   _noValue=false;
   const nvBtn=document.getElementById('nl-no-value-btn');if(nvBtn)nvBtn.classList.remove('active');
   const nvInp=document.getElementById('nl-value');if(nvInp){nvInp.disabled=false;nvInp.placeholder='Valor estimado (R$)';}
-  selectedOrigin=null;
   editingLeadId=null;
   const nlSec=document.getElementById('nl-notes-section');if(nlSec)nlSec.style.display='none';
   const titleEl=document.querySelector('#addLeadModal .nl-title');
@@ -1114,9 +1024,8 @@ function openEditLeadModal(id){
   const lbl=document.getElementById('dd-product-label');
   if(lbl&&prod)lbl.textContent=prod.icon+' '+prod.name;
   // disable value for Conta product
-  const _editIsConta=prod&&prod.name.toLowerCase().includes('conta');
   // value
-  if(_editIsConta){
+  if(isContaProduct(prod)){
     _noValue=true;
     const nvBtn=document.getElementById('nl-no-value-btn');if(nvBtn){nvBtn.classList.add('active');nvBtn.disabled=true;}
     const nvInp=document.getElementById('nl-value');if(nvInp){nvInp.disabled=true;nvInp.value='';nvInp.placeholder='Conta — sem valor';}
@@ -1137,7 +1046,6 @@ function openEditLeadModal(id){
   if(stageLbl)stageLbl.textContent=stageMap[l.stage]||'Prospecção';
   // priority
   document.getElementById('nl-priority').value=l.priority||'medium';
-  document.querySelectorAll('.nl-priority-pill').forEach(b=>b.classList.toggle('active',b.dataset.p===(l.priority||'medium')));
   // other fields
   document.getElementById('nl-phone').value=l.phone||'';
   const cpfEl=document.getElementById('nl-cpf');if(cpfEl)cpfEl.value=l.cpf||'';
@@ -1194,7 +1102,7 @@ function renderNlStageHistory(l){
   if(!el)return;
   const history=l.stageHistory&&l.stageHistory.length>0?l.stageHistory:
     [{stage:l.stage,date:l.createdAt||new Date().toISOString()}];
-  const stageColors={prospect:STAGE_COLORS['prospect']||'#6b6b85',negotiating:STAGE_COLORS['negotiating']||'#ffb800',waiting:STAGE_COLORS['waiting']||'#b94dff',won:'#00e57a',lost:'#ff3c3c',recycle:'#00e57a'};
+  const stageColors={...STAGE_COLORS,recycle:'#00e57a'};
   const stageLabelsExt={...STAGE_LABELS,won:'💰 Ganho',lost:'❌ Perdido',recycle:'♻️ Reciclagem'};
   const realIdxMap=[...history].map((_,i)=>i).reverse();
   el.innerHTML=realIdxMap.map((realIdx)=>{
@@ -1303,11 +1211,6 @@ function selectApptUrgency(btn){
   btn.classList.add('active');
   document.getElementById('ap-urgency').value=btn.dataset.u;
 }
-function selectPriority(btn){
-  document.querySelectorAll('.nl-priority-pill').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('nl-priority').value=btn.dataset.p;
-}
 function toggleDropdown(name){
   const dd=document.getElementById('dd-'+name);
   if(!dd)return;
@@ -1326,10 +1229,9 @@ function pickDropdown(name,value,label,e){
   // If selecting product, check if it's Conta → disable value field
   if(name==='product'){
     const p=products.find(x=>String(x.id)===String(value));
-    const isConta=p&&p.name.toLowerCase().includes('conta');
     const vInp=document.getElementById('nl-value');
     const vWrap=document.getElementById('nl-no-value-btn');
-    if(isConta){
+    if(isContaProduct(p)){
       _noValue=true;
       if(vInp){vInp.disabled=true;vInp.value='';vInp.placeholder='Conta — sem valor';}
       if(vWrap)vWrap.disabled=true;
@@ -1345,11 +1247,6 @@ document.addEventListener('click',function(e){
   if(!e.target.closest('.nl-dropdown'))
     document.querySelectorAll('.nl-dropdown.open').forEach(d=>d.classList.remove('open'));
 });
-function selectStagePill(btn){
-  document.querySelectorAll('.nl-stage-pill').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('nl-stage').value=btn.dataset.stage;
-}
 function toggleNoValue(){
   _noValue=!_noValue;
   const btn=document.getElementById('nl-no-value-btn');
@@ -1363,17 +1260,6 @@ function toggleAgendaSection(){
   const open=sec.style.display==='none';
   sec.style.display=open?'block':'none';
   if(arrow)arrow.classList.toggle('open',open);
-}
-function switchLeadTab(tab){
-  ['info','desc'].forEach(t=>{
-    document.getElementById('ltab-'+t).classList.toggle('active',t===tab);
-    document.getElementById('lpanel-'+t).style.display=t===tab?'block':'none';
-  });
-}
-function toggleOrigin(btn){
-  // origin removed
-  if(selectedOrigin!==btn.textContent.trim()){btn.classList.add('active');selectedOrigin=btn.textContent.trim();}
-  else selectedOrigin=null;
 }
 function saveLead(){
   const name=document.getElementById('nl-name').value.trim();
@@ -1394,7 +1280,7 @@ function saveLead(){
         priority:document.getElementById('nl-priority').value||'medium',
         stage:newStage,status:newStatus,
         phone:document.getElementById('nl-phone').value.trim(),
-        cpf:document.getElementById('nl-cpf')?document.getElementById('nl-cpf').value.trim():'',
+        cpf:document.getElementById('nl-cpf').value.trim(),
         email:document.getElementById('nl-email').value.trim(),
         description:document.getElementById('nl-desc').value.trim(),
         wonAt:(newStatus==='won'&&!old.wonAt?new Date().toISOString():old.wonAt)
@@ -1416,7 +1302,7 @@ function saveLead(){
     stage:newStage,
     status:newStatus,notes:[],wonAt:(newStatus==='won'?new Date().toISOString():null),
     phone:document.getElementById('nl-phone').value.trim(),
-    cpf:document.getElementById('nl-cpf')?document.getElementById('nl-cpf').value.trim():'',
+    cpf:document.getElementById('nl-cpf').value.trim(),
     email:document.getElementById('nl-email').value.trim(),
     description:document.getElementById('nl-desc').value.trim(),
     createdAt:new Date().toISOString(),
@@ -1433,7 +1319,6 @@ function saveLead(){
     save('crm_appts2',appointments);
   }
   save('crm_leads2',leads);
-  selectedOrigin=null;
   closeModalById('addLeadModal');renderContent();
 }
 
@@ -1454,38 +1339,6 @@ function saveAppt(){
   const urgency=document.getElementById('ap-urgency').value||'medium';
   appointments.push({id:Date.now(),time,name,detail:document.getElementById('ap-desc').value.trim()||'Compromisso',leadId:null,date:d,done:false,urgency});
   save('crm_appts2',appointments);closeModalById('addApptModal');renderContent();
-}
-
-// ── SCHEDULE FROM LEAD ────────────────────────────────────────
-function selectSchUrgency(btn){
-  document.querySelectorAll('#sch-urgency-pills .nl-priority-pill').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  document.getElementById('sch-urgency').value=btn.dataset.u;
-}
-function openScheduleModal(leadId){
-  scheduleLeadId=leadId;
-  const l=leads.find(x=>x.id===leadId);if(!l)return;
-  const prod=products.find(p=>p.id===l.productId);
-  document.getElementById('scheduleTitle').textContent=l.name;
-  document.getElementById('scheduleSubtitle').textContent=prod?prod.icon+' '+prod.name:'';
-  document.getElementById('sch-date').value=today();
-  document.getElementById('sch-time').value='';
-  document.getElementById('sch-desc').value='';
-  document.getElementById('sch-urgency').value='medium';
-  document.querySelectorAll('#sch-urgency-pills .nl-priority-pill').forEach(b=>b.classList.toggle('active',b.dataset.u==='medium'));
-  openModal('scheduleModal');
-}
-function saveSchedule(){
-  const time=document.getElementById('sch-time').value;
-  if(!time){document.getElementById('sch-time').focus();return;}
-  const l=leads.find(x=>x.id===scheduleLeadId);if(!l)return;
-  const date=document.getElementById('sch-date').value||today();
-  const urgency=document.getElementById('sch-urgency').value||'medium';
-  appointments.push({id:Date.now(),time,name:l.name,detail:document.getElementById('sch-desc').value.trim()||'Compromisso',leadId:scheduleLeadId,date,done:false,urgency});
-  save('crm_appts2',appointments);
-  closeModalById('scheduleModal');
-  showToast('📅 Adicionado na agenda!');
-  if(currentTab==='agenda')renderContent();
 }
 
 // ── EDIT APPT ────────────────────────────────────────────────
@@ -1565,29 +1418,13 @@ function buildIconPicker(){
 }
 function pickIcon(ic){selIcon=ic;buildIconPicker();}
 
-// ── TEMP / TAGS ───────────────────────────────────────────────
+// ── CPF ───────────────────────────────────────────────────────
 function fmtCPF(el){
   let v=el.value.replace(/\D/g,'').slice(0,11);
   if(v.length>9) v=v.slice(0,3)+'.'+v.slice(3,6)+'.'+v.slice(6,9)+'-'+v.slice(9);
   else if(v.length>6) v=v.slice(0,3)+'.'+v.slice(3,6)+'.'+v.slice(6);
   else if(v.length>3) v=v.slice(0,3)+'.'+v.slice(3);
   el.value=v;
-}
-function tEmoji(t){return t==='hot'?'🔥':t==='warm'?'☀️':'❄️'}
-function selectTemp(t,ctx){
-  tempState[ctx]=t;
-  const mid=ctx==='notes'?'notesModal':ctx==='lead'?'addLeadModal':'addApptModal';
-  document.querySelectorAll(`#${mid} .temp-btn`).forEach(b=>{b.classList.remove('active');if(b.classList.contains(t))b.classList.add('active');});
-}
-function updateTempBtns(t,ctx){
-  const mid=ctx==='notes'?'notesModal':ctx==='lead'?'addLeadModal':'addApptModal';
-  document.querySelectorAll(`#${mid} .temp-btn`).forEach(b=>{b.classList.remove('active');if(b.classList.contains(t))b.classList.add('active');});
-}
-function toggleTag(btn){
-  btn.classList.toggle('selected');
-  const text=btn.textContent.trim();
-  if(btn.classList.contains('selected'))selectedTags.push(text);
-  else selectedTags=selectedTags.filter(t=>t!==text);
 }
 
 // ── MODALS ────────────────────────────────────────────────────
@@ -1663,7 +1500,7 @@ function showToast(msg){
 }
 
 // ── INIT ──────────────────────────────────────────────────────
-buildColorPicker();buildIconPicker();renderContent();
+renderContent();
 let _appInited=false;
 function appInit(){
   if(_appInited)return;
@@ -1672,9 +1509,6 @@ function appInit(){
   if(p){products.length=0;products.push(...p);}
   if(l){
     const loaded=fixLeads(l);
-    // merge all default leads that don't exist yet in Firebase data
-    const existingIds=new Set(loaded.map(x=>x.id));
-    const toAdd=_defaultLeads.filter(x=>!existingIds.has(x.id));
     // merge: for each loaded lead, keep the in-memory version if it has a newer lastMoveAt
     const inMemById=new Map(leads.map(x=>[x.id,x]));
     const merged=loaded.map(fbLead=>{
@@ -1682,16 +1516,16 @@ function appInit(){
       if(mem&&mem.lastMoveAt&&fbLead.lastMoveAt&&mem.lastMoveAt>fbLead.lastMoveAt) return mem;
       return fbLead;
     });
-    leads.length=0;leads.push(...merged,...toAdd);
+    leads.length=0;leads.push(...merged);
     // fix: Conta product leads must not have value
-    const _contaFix=new Set(products.filter(p=>p.name.toLowerCase().includes('conta')).map(p=>p.id));
+    const _contaFix=contaIds();
     let _fixedConta=false;
     leads.forEach(l=>{if(_contaFix.has(l.productId)&&l.value!=null){l.value=null;_fixedConta=true;}});
-    if(toAdd.length>0||_fixedConta)save('crm_leads2',leads);
+    if(_fixedConta)save('crm_leads2',leads);
   }
   if(a){appointments.length=0;appointments.push(...a);}
   if(i){ideas.length=0;ideas.push(...i);}
-  buildColorPicker();buildIconPicker();renderContent();
+  renderContent();
 }
 if(window._fbReady){ appInit(); }
 else { window.addEventListener('fb-ready', appInit, {once:true}); }
